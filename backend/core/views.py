@@ -26,9 +26,8 @@ class ClothRollViewSet(viewsets.ModelViewSet):
             qs = qs.filter(status=status)
         gsm_min = self.request.query_params.get("gsmMin")
         if gsm_min:
-            qs = qs.filter(fabric_weight_gsm__gte=gsm_min) | qs.filter(
-                status=ClothRoll.STATUS_RAW
-            )
+            # 严格大于：与前端「克重大于 400」同一谓词，不放行任何状态的低克重卷。
+            qs = qs.filter(fabric_weight_gsm__gt=gsm_min)
         return qs
 
 

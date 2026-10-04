@@ -28,18 +28,26 @@ function localNow() {
 
 const selected = computed(() => rolls.value.find((r) => r.id === selectedId.value) || null)
 
+const GSM_FILTER_MIN = 400
+
+function isHeavy(r) {
+  return r.fabricWeightGsm > GSM_FILTER_MIN
+}
+
+// 架面唯一筛选结果：挂签显隐、每间条数、架底计数全部从它派生，
+// 不得在模板里另写筛选谓词，否则三处会再次对不上。
+const filteredRolls = computed(() =>
+  gsmHeavy.value ? rolls.value.filter(isHeavy) : rolls.value,
+)
+
 const rollsByLoft = computed(() => {
   return lofts.value.map((loft) => ({
     loft,
-    rolls: rolls.value.filter((r) => {
-      if (r.loftId !== loft.id) return false
-      if (!gsmHeavy.value) return true
-      return r.fabricWeightGsm > 400 || r.status === 'raw'
-    }),
+    rolls: filteredRolls.value.filter((r) => r.loftId === loft.id),
   }))
 })
 
-const heavyCount = computed(() => rolls.value.filter((r) => r.fabricWeightGsm > 400).length)
+const heavyCount = computed(() => filteredRolls.value.length)
 
 const selectedDips = computed(() => {
   if (!selectedId.value) return []
@@ -83,14 +91,22 @@ async function setStatus(status) {
   panelError.value = ''
   panelBusy.value = true
   try {
-    await api.patch(`/rolls/${selected.value.id}/`, { status })
+    await api.patch(`/rolls/${selected.value.id}/`, {
+      status,
+      version: selected.value.version,
+    })
     await load()
   } catch (e) {
-    const data = e.response?.data
-    panelError.value =
-      data?.status?.[0] ||
-      data?.detail ||
-      '状态更新失败（标「已固化」需最近浸渍固化时长 ≥ 12 小时）'
+    if (e.response?.status === 409) {
+      panelError.value = '该布卷刚被他人改过，架面已刷新，请重新操作'
+      await load()
+    } else {
+      const data = e.response?.data
+      panelError.value =
+        data?.status?.[0] ||
+        data?.detail ||
+        '状态更新失败（标「已固化」需最近浸渍固化时长 ≥ 12 小时）'
+    }
   } finally {
     panelBusy.value = false
   }
@@ -113,7 +129,10 @@ async function logDip() {
     })
     if (selected.value.status === 'raw') {
       try {
-        await api.patch(`/rolls/${selected.value.id}/`, { status: 'dipping' })
+        await api.patch(`/rolls/${selected.value.id}/`, {
+        status: 'dipping',
+        version: selected.value.version,
+      })
       } catch {
         /* 浸渍已记；状态跟进失败不阻断 */
       }

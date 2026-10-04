@@ -29,6 +29,9 @@ class ClothRoll(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_RAW)
     fabric_weight_gsm = models.PositiveIntegerField(default=380)
     notes = models.TextField(blank=True, default="")
+    # 乐观锁版本号：每次更新 +1，PATCH 必须带读取时的版本；
+    # 两人交叉改同一卷时，后提交方版本不匹配，更新被拒（只留一版）。
+    version = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

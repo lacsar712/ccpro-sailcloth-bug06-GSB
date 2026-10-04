@@ -1,7 +1,18 @@
-from rest_framework import serializers
+from django.db.models import F
+from django.utils import timezone
+from rest_framework import serializers, status
+from rest_framework.exceptions import APIException
 
 from .models import ClothRoll, DipRun, Loft
 from .rules import can_mark_roll_cured
+
+
+class VersionConflict(APIException):
+    """客户端读取的版本已过期（他人先改过同一卷）。"""
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "该布卷已被他人修改，请刷新架面后重试"
+    default_code = "version_conflict"
 
 
 class LoftSerializer(serializers.ModelSerializer):
@@ -23,6 +34,8 @@ class ClothRollSerializer(serializers.ModelSerializer):
     rollCode = serializers.CharField(source="roll_code")
     fabricWeightGsm = serializers.IntegerField(source="fabric_weight_gsm", required=False)
     loftName = serializers.CharField(source="loft.name", read_only=True)
+    # 乐观锁版本：GET 返回当前版本；更新时必须原样带回，过期则 409。
+    version = serializers.IntegerField(min_value=0, required=False)
 
     class Meta:
         model = ClothRoll
@@ -34,6 +47,7 @@ class ClothRollSerializer(serializers.ModelSerializer):
             "status",
             "fabricWeightGsm",
             "notes",
+            "version",
             "created_at",
             "updated_at",
         )
@@ -60,7 +74,34 @@ class ClothRollSerializer(serializers.ModelSerializer):
             ok, msg = can_mark_roll_cured(roll)
             if not ok:
                 raise serializers.ValidationError({"status": msg})
+
+        if self.instance is not None and "version" not in attrs:
+            raise serializers.ValidationError(
+                {"version": "更新布卷必须携带读取时的 version"}
+            )
         return attrs
+
+    def create(self, validated_data):
+        # 新建一律从 0 开始，忽略客户端传入的 version
+        validated_data.pop("version", None)
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        expected_version = validated_data.pop("version")
+        if expected_version != instance.version:
+            raise VersionConflict()
+
+        # updated_at 是 auto_now，queryset.update 不会自动刷新，手动带上。
+        validated_data["updated_at"] = timezone.now()
+        updated = (
+            ClothRoll.objects.filter(pk=instance.pk, version=expected_version)
+            .update(version=F("version") + 1, **validated_data)
+        )
+        if not updated:
+            # 读版本与校验之间被他人抢先提交：两个浸胶工的交叉修改只成一版。
+            raise VersionConflict()
+        instance.refresh_from_db()
+        return instance
 
 
 class DipRunSerializer(serializers.ModelSerializer):

@@ -6,6 +6,7 @@ const rolls = ref([])
 const lofts = ref([])
 const error = ref('')
 const editing = ref(null)
+const editVersion = ref(0)
 const form = reactive({
   loftId: null,
   rollCode: '',
@@ -30,6 +31,7 @@ async function load() {
 
 function startEdit(row) {
   editing.value = row.id
+  editVersion.value = row.version
   form.loftId = row.loftId
   form.rollCode = row.rollCode
   form.status = row.status
@@ -39,6 +41,7 @@ function startEdit(row) {
 
 function resetForm() {
   editing.value = null
+  editVersion.value = 0
   form.rollCode = ''
   form.status = 'raw'
   form.fabricWeightGsm = 380
@@ -50,17 +53,24 @@ async function save() {
   error.value = ''
   try {
     if (editing.value) {
-      await api.patch(`/rolls/${editing.value}/`, { ...form })
+      await api.patch(`/rolls/${editing.value}/`, { ...form, version: editVersion.value })
     } else {
       await api.post('/rolls/', { ...form })
     }
     resetForm()
     await load()
   } catch (e) {
+    if (e.response?.status === 409) {
+      error.value = '该布卷已被他人修改，已重新加载，请再次编辑'
+      resetForm()
+      await load()
+      return
+    }
     const data = e.response?.data
     error.value =
       data?.status?.[0] ||
       data?.rollCode?.[0] ||
+      data?.version?.[0] ||
       data?.detail ||
       '保存失败（若标为已固化，请确认最近浸渍固化时长 ≥ 12 小时）'
   }
