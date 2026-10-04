@@ -11,6 +11,11 @@ const selectedId = ref(null)
 const panelBusy = ref(false)
 const gsmHeavy = ref(false)
 
+// 唯一的「克重大于 400」谓词：挂签显隐、各架间条数、架底计数全部走它，
+// 不允许再按 status 留旁路（否则 380 轻卷会夹进挂签，与架底对打）
+const HEAVY_GSM = 400
+const isHeavyRoll = (roll) => Number(roll.fabricWeightGsm) > HEAVY_GSM
+
 const statusLabel = { raw: '原布', dipping: '浸渍中', cured: '已固化' }
 
 const dipForm = reactive({
@@ -34,12 +39,12 @@ const rollsByLoft = computed(() => {
     rolls: rolls.value.filter((r) => {
       if (r.loftId !== loft.id) return false
       if (!gsmHeavy.value) return true
-      return r.fabricWeightGsm > 400 || r.status === 'raw'
+      return isHeavyRoll(r)
     }),
   }))
 })
 
-const heavyCount = computed(() => rolls.value.filter((r) => r.fabricWeightGsm > 400).length)
+const heavyCount = computed(() => rolls.value.filter(isHeavyRoll).length)
 
 const selectedDips = computed(() => {
   if (!selectedId.value) return []
@@ -82,15 +87,23 @@ async function setStatus(status) {
   if (!selected.value) return
   panelError.value = ''
   panelBusy.value = true
+  const rollId = selected.value.id
+  const version = selected.value.version
   try {
-    await api.patch(`/rolls/${selected.value.id}/`, { status })
+    await api.patch(`/rolls/${rollId}/`, { status, version })
     await load()
   } catch (e) {
     const data = e.response?.data
-    panelError.value =
-      data?.status?.[0] ||
-      data?.detail ||
-      '状态更新失败（标「已固化」需最近浸渍固化时长 ≥ 12 小时）'
+    if (e.response?.status === 409) {
+      panelError.value =
+        data?.detail || '该布卷刚被他人更新，请刷新架面后再操作'
+      await load()
+    } else {
+      panelError.value =
+        data?.status?.[0] ||
+        data?.detail ||
+        '状态更新失败（标「已固化」需最近浸渍固化时长 ≥ 12 小时）'
+    }
   } finally {
     panelBusy.value = false
   }
@@ -113,9 +126,12 @@ async function logDip() {
     })
     if (selected.value.status === 'raw') {
       try {
-        await api.patch(`/rolls/${selected.value.id}/`, { status: 'dipping' })
+        await api.patch(`/rolls/${selected.value.id}/`, {
+          status: 'dipping',
+          version: selected.value.version,
+        })
       } catch {
-        /* 浸渍已记；状态跟进失败不阻断 */
+        /* 浸渍已记；状态跟进失败不阻断（409 时由随后 load 取最新） */
       }
     }
     dipForm.cureHours = ''

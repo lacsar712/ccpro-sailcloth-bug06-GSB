@@ -12,6 +12,7 @@ const form = reactive({
   status: 'raw',
   fabricWeightGsm: 380,
   notes: '',
+  version: 1,
 })
 
 const statusLabel = { raw: '原布', dipping: '浸渍中', cured: '已固化' }
@@ -35,6 +36,7 @@ function startEdit(row) {
   form.status = row.status
   form.fabricWeightGsm = row.fabricWeightGsm
   form.notes = row.notes || ''
+  form.version = row.version || 1
 }
 
 function resetForm() {
@@ -43,6 +45,7 @@ function resetForm() {
   form.status = 'raw'
   form.fabricWeightGsm = 380
   form.notes = ''
+  form.version = 1
   if (lofts.value.length) form.loftId = lofts.value[0].id
 }
 
@@ -52,12 +55,19 @@ async function save() {
     if (editing.value) {
       await api.patch(`/rolls/${editing.value}/`, { ...form })
     } else {
-      await api.post('/rolls/', { ...form })
+      const { version, ...payload } = form
+      await api.post('/rolls/', { ...payload })
     }
     resetForm()
     await load()
   } catch (e) {
     const data = e.response?.data
+    if (e.response?.status === 409) {
+      error.value = data?.detail || '该布卷刚被他人更新，请刷新后取最新数据重试'
+      resetForm()
+      await load()
+      return
+    }
     error.value =
       data?.status?.[0] ||
       data?.rollCode?.[0] ||

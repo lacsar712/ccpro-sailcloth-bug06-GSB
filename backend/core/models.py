@@ -31,6 +31,8 @@ class ClothRoll(models.Model):
     notes = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # 乐观锁版本号：每次更新 +1，交叉编辑靠它只放一版写入
+    version = models.PositiveIntegerField(default=1)
 
     class Meta:
         ordering = ["loft_id", "roll_code"]
